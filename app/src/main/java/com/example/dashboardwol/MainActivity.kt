@@ -1,5 +1,3 @@
-@file:OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
-
 package com.example.dashboardwol
 
 import android.annotation.SuppressLint
@@ -11,14 +9,15 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.ExperimentalAnimationApi
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
-import androidx.compose.animation.with
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.combinedClickable
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -33,13 +32,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Divider
 import androidx.compose.material3.DrawerValue
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
-import androidx.compose.material3.LocalTextStyle
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.OutlinedTextField
@@ -52,14 +46,16 @@ import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -72,56 +68,68 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.edit
+import androidx.core.view.WindowCompat
 import com.example.dashboardwol.ui.theme.DashboardWOLTheme
+import kotlinx.coroutines.delay
 import java.net.DatagramPacket
 import java.net.DatagramSocket
+import java.net.InetAddress
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import kotlin.random.Random
-import kotlinx.coroutines.delay
-import java.net.InetAddress
-
-@Suppress("DEPRECATION")
-
-// Add this enum class at the top level of your file
-enum class FontType {
-    RESOURCE,  // Custom font from res/font
-    SYSTEM     // System font
-}
-
-// Update the data structure to hold font information
-data class FontInfo(
-    val name: String,
-    val resourceId: Int = 0,
-    val type: FontType = FontType.RESOURCE,
-    val systemFont: String = ""
-)
 
 class MainActivity : ComponentActivity() {
+    private val executor = Executors.newSingleThreadExecutor()
+
     @SuppressLint("SourceLockedOrientationActivity")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Set portrait orientation
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-        window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+
+        // Modern approach for full screen instead of deprecated FLAG_FULLSCREEN
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+
+        // Keep screen on
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
+        // Enable edge-to-edge display
         enableEdgeToEdge()
+
         setContent {
             DashboardWOLTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    WolControlScreen()
+                    WolControlScreen(executor)
                 }
             }
         }
     }
+
+    override fun onDestroy() {
+        // Properly shutdown the executor to avoid memory leaks
+        executor.shutdown()
+        try {
+            if (!executor.awaitTermination(1, TimeUnit.SECONDS)) {
+                executor.shutdownNow()
+            }
+        } catch (_: InterruptedException) {
+            executor.shutdownNow()
+        }
+        super.onDestroy()
+    }
 }
 
 @Composable
-fun WolControlScreen() {
+fun WolControlScreen(executor: ExecutorService) {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("WolPrefs", Context.MODE_PRIVATE) }
 
@@ -137,9 +145,9 @@ fun WolControlScreen() {
     var buttonText3 by remember { mutableStateOf(prefs.getString("buttonText3", "3") ?: "3") }
 
     // Size preferences
-    var buttonWidth by remember { mutableStateOf(prefs.getFloat("buttonWidth", 300f)) }
-    var buttonHeight by remember { mutableStateOf(prefs.getFloat("buttonHeight", 150f)) }
-    var fontSize by remember { mutableStateOf(prefs.getFloat("fontSize", 200f)) }
+    var buttonWidth by remember { mutableFloatStateOf(prefs.getFloat("buttonWidth", 300f)) }
+    var buttonHeight by remember { mutableFloatStateOf(prefs.getFloat("buttonHeight", 150f)) }
+    var fontSize by remember { mutableFloatStateOf(prefs.getFloat("fontSize", 200f)) }
 
     // Color preferences
     val defaultButtonColor = Color(0xFF0072BD)
@@ -165,25 +173,8 @@ fun WolControlScreen() {
         )
     }
 
-    // Font preference
-    val availableFonts = remember { getFontResources(context) }
-    var fontRes by remember {
-        mutableStateOf(prefs.getInt("fontRes", R.font.lcddot))
-    }
-
-    // Selected font info
-    var selectedFontInfo by remember(fontRes) {
-        mutableStateOf(
-            availableFonts.firstOrNull {
-                it.type == FontType.RESOURCE && it.resourceId == fontRes
-            } ?: availableFonts.first()
-        )
-    }
-
-    // Get font family based on selected font info
-    val fontFamily by remember(selectedFontInfo) {
-        mutableStateOf(loadFontFamily(selectedFontInfo))
-    }
+    // Fixed font family - always use lcddot.ttf
+    val fontFamily = FontFamily(Font(R.font.lcddot, FontWeight.Normal))
 
     // Network settings
     var broadcastIp by remember {
@@ -194,11 +185,12 @@ fun WolControlScreen() {
     var showDialog by remember { mutableStateOf(false) }
     var editingMac by remember { mutableStateOf("") }
     var currentMacType by remember { mutableStateOf<Int?>(null) }
-    var currentTime by remember { mutableStateOf(System.currentTimeMillis()) }
+    var currentTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    var lastError by remember { mutableStateOf<String?>(null) }
 
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
-    val scope = rememberCoroutineScope()
 
+    // Clock timer effect with lifecycle awareness
     LaunchedEffect(Unit) {
         while (true) {
             delay(1000)
@@ -209,6 +201,7 @@ fun WolControlScreen() {
     val timeFormatter = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
     val timeParts = timeFormatter.format(Date(currentTime)).split(":")
 
+    // Screen configuration and positioning
     val configuration = LocalConfiguration.current
     val density = LocalDensity.current.density
 
@@ -229,6 +222,7 @@ fun WolControlScreen() {
     val maxX = screenWidthPx - groupWidthPx
     val maxY = screenHeightPx - groupHeightPx
 
+    // Button group position and movement
     var groupPosition by remember {
         mutableStateOf(
             Offset(
@@ -247,6 +241,7 @@ fun WolControlScreen() {
         )
     }
 
+    // Movement effect with lifecycle awareness
     LaunchedEffect(Unit) {
         while (true) {
             delay(30000)
@@ -265,7 +260,7 @@ fun WolControlScreen() {
         }
     }
 
-    val executor = Executors.newSingleThreadExecutor()
+    // Function to send Wake-on-LAN packet
     fun sendWolPacket(mac: String) {
         executor.execute {
             try {
@@ -278,41 +273,43 @@ fun WolControlScreen() {
                 DatagramSocket().use { socket ->
                     socket.send(packet)
                 }
+                lastError = null
             } catch (e: Exception) {
                 e.printStackTrace()
+                lastError = "Error: ${e.message}"
             }
         }
     }
 
+    // MAC Address Edit Dialog
     if (showDialog) {
-        AlertDialog(
-            onDismissRequest = { showDialog = false },
-            title = { Text("Edit MAC Address") },
-            text = {
-                TextField(
-                    value = editingMac,
-                    onValueChange = { editingMac = it },
-                    label = { Text("New MAC Address") },
-                    placeholder = { Text("Format: 01:23:45:67:89:AB") }
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        if (isValidMac(editingMac)) {
-                            when (currentMacType) {
-                                1 -> mac1 = editingMac
-                                2 -> mac2 = editingMac
-                                3 -> mac3 = editingMac
-                            }
-                            prefs.edit().putString("mac${currentMacType}", editingMac).apply()
-                            showDialog = false
-                        }
+        MacAddressDialog(
+            initialMac = editingMac,
+            onDismiss = { showDialog = false },
+            onConfirm = { newMac ->
+                if (isValidMac(newMac)) {
+                    when (currentMacType) {
+                        1 -> mac1 = newMac
+                        2 -> mac2 = newMac
+                        3 -> mac3 = newMac
                     }
-                ) { Text("OK") }
-            },
-            dismissButton = {
-                Button(onClick = { showDialog = false }) { Text("Cancel") }
+                    prefs.edit { putString("mac${currentMacType}", newMac) }
+                    showDialog = false
+                }
+            }
+        )
+    }
+
+    // Error dialog if needed
+    lastError?.let { error ->
+        AlertDialog(
+            onDismissRequest = { lastError = null },
+            title = { Text("Error") },
+            text = { Text(error) },
+            confirmButton = {
+                Button(onClick = { lastError = null }) {
+                    Text("OK")
+                }
             }
         )
     }
@@ -320,229 +317,330 @@ fun WolControlScreen() {
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
-            Surface(
-                color = Color(0xFF1A1A1A),
-                modifier = Modifier.fillMaxSize()
-            ) {
-                Column(
-                    modifier = Modifier
-                        .padding(16.dp)
-                        .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.Top
-                ) {
-                    Text("Settings", style = MaterialTheme.typography.headlineSmall, color = Color.White)
-
-                    // Display Settings
-                    Text("Display Settings",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = Color.White,
-                        modifier = Modifier.padding(vertical = 8.dp)
-                    )
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
-                        Text("Show time",
-                            color = Color.White,
-                            modifier = Modifier.weight(1f)
-                        )
-                        Switch(
-                            checked = showTimePreference,
-                            onCheckedChange = {
-                                showTimePreference = it
-                                prefs.edit().putBoolean("showTime", it).apply()
-                            }
-                        )
-                    }
-
-                    if (!showTimePreference) {
-                        OutlinedTextField(
-                            value = buttonText1,
-                            onValueChange = {
-                                buttonText1 = it
-                                prefs.edit().putString("buttonText1", it).apply()
-                            },
-                            label = { Text("Button 1 Text") },
-                            modifier = Modifier.padding(vertical = 4.dp)
-                        )
-                        OutlinedTextField(
-                            value = buttonText2,
-                            onValueChange = {
-                                buttonText2 = it
-                                prefs.edit().putString("buttonText2", it).apply()
-                            },
-                            label = { Text("Button 2 Text") },
-                            modifier = Modifier.padding(vertical = 4.dp)
-                        )
-                        OutlinedTextField(
-                            value = buttonText3,
-                            onValueChange = {
-                                buttonText3 = it
-                                prefs.edit().putString("buttonText3", it).apply()
-                            },
-                            label = { Text("Button 3 Text") },
-                            modifier = Modifier.padding(vertical = 4.dp)
-                        )
-                    }
-
-                    Divider(color = Color.LightGray, modifier = Modifier.padding(vertical = 8.dp))
-
-                    // Size Settings
-                    Text("Size Settings",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = Color.White,
-                        modifier = Modifier.padding(vertical = 8.dp)
-                    )
-                    SizeSlider(
-                        label = "Button Width",
-                        value = buttonWidth,
-                        onValueChange = { buttonWidth = it; prefs.edit().putFloat("buttonWidth", it).apply() },
-                        range = 100f..300f
-                    )
-                    SizeSlider(
-                        label = "Button Height",
-                        value = buttonHeight,
-                        onValueChange = { buttonHeight = it; prefs.edit().putFloat("buttonHeight", it).apply() },
-                        range = 100f..200f
-                    )
-                    SizeSlider(
-                        label = "Font Size",
-                        value = fontSize,
-                        onValueChange = { fontSize = it; prefs.edit().putFloat("fontSize", it).apply() },
-                        range = 100f..400f
-                    )
-
-                    Divider(color = Color.LightGray, modifier = Modifier.padding(vertical = 8.dp))
-
-                    // Color Settings
-                    Text("Color Settings",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = Color.White,
-                        modifier = Modifier.padding(vertical = 8.dp)
-                    )
-                    ColorPicker(
-                        title = "Button Color",
-                        selectedColor = buttonColor,
-                        onColorSelected = {
-                            buttonColor = it
-                            prefs.edit().putLong("buttonColor", it.value.toLong()).apply()
-                        }
-                    )
-                    ColorPicker(
-                        title = "Text Color",
-                        selectedColor = textColor,
-                        onColorSelected = {
-                            textColor = it
-                            prefs.edit().putLong("textColor", it.value.toLong()).apply()
-                        }
-                    )
-
-                    Divider(color = Color.LightGray, modifier = Modifier.padding(vertical = 8.dp))
-
-                    // Font Settings
-                    Text("Font Settings",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = Color.White,
-                        modifier = Modifier.padding(vertical = 8.dp)
-                    )
-                    FontDropdown(
-                        fonts = availableFonts,
-                        selectedFontRes = fontRes,
-                        onFontSelected = { newFontInfo ->
-                            selectedFontInfo = newFontInfo
-                            if (newFontInfo.type == FontType.RESOURCE) {
-                                fontRes = newFontInfo.resourceId
-                                prefs.edit().putInt("fontRes", newFontInfo.resourceId).apply()
-                            } else {
-                                // For system fonts, we can store a special value or
-                                // add additional preference fields if needed
-                                // For now, we'll just use the first font resource as a placeholder
-                                // to maintain compatibility with the existing code
-                                fontRes = R.font.lcddot
-                                prefs.edit().putInt("fontRes", R.font.lcddot).apply()
-                            }
-                        }
-                    )
-
-                    Divider(color = Color.LightGray, modifier = Modifier.padding(vertical = 8.dp))
-
-                    // Network Settings
-                    Text("Network Settings",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = Color.White,
-                        modifier = Modifier.padding(vertical = 8.dp)
-                    )
-                    OutlinedTextField(
-                        value = broadcastIp,
-                        onValueChange = {
-                            broadcastIp = it
-                            prefs.edit().putString("broadcastIp", it).apply()
-                        },
-                        label = { Text("Broadcast IP Address") },
-                        modifier = Modifier.padding(vertical = 4.dp)
-                    )
+            SettingsDrawerContent(
+                showTimePreference = showTimePreference,
+                onShowTimeChange = {
+                    showTimePreference = it
+                    prefs.edit { putBoolean("showTime", it) }
+                },
+                buttonText1 = buttonText1,
+                onButtonText1Change = {
+                    buttonText1 = it
+                    prefs.edit { putString("buttonText1", it) }
+                },
+                buttonText2 = buttonText2,
+                onButtonText2Change = {
+                    buttonText2 = it
+                    prefs.edit { putString("buttonText2", it) }
+                },
+                buttonText3 = buttonText3,
+                onButtonText3Change = {
+                    buttonText3 = it
+                    prefs.edit { putString("buttonText3", it) }
+                },
+                buttonWidth = buttonWidth,
+                onButtonWidthChange = {
+                    buttonWidth = it
+                    prefs.edit { putFloat("buttonWidth", it) }
+                },
+                buttonHeight = buttonHeight,
+                onButtonHeightChange = {
+                    buttonHeight = it
+                    prefs.edit { putFloat("buttonHeight", it) }
+                },
+                fontSize = fontSize,
+                onFontSizeChange = {
+                    fontSize = it
+                    prefs.edit { putFloat("fontSize", it) }
+                },
+                buttonColor = buttonColor,
+                onButtonColorChange = {
+                    buttonColor = it
+                    prefs.edit { putLong("buttonColor", it.value.toLong()) }
+                },
+                textColor = textColor,
+                onTextColorChange = {
+                    textColor = it
+                    prefs.edit { putLong("textColor", it.value.toLong()) }
+                },
+                broadcastIp = broadcastIp,
+                onBroadcastIpChange = {
+                    broadcastIp = it
+                    prefs.edit { putString("broadcastIp", it) }
                 }
-            }
+            )
         }
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
-            Box(
-                modifier = Modifier
-                    .offset { IntOffset(groupPosition.x.toInt(), groupPosition.y.toInt()) }
-                    .size(buttonWidthDp, buttonHeightDp * 3 + spacingDp * 2)
-            ) {
-                WolButton(
-                    text = if (showTimePreference) timeParts[0] else buttonText1,
-                    isTimeDisplay = showTimePreference,
-                    onClick = { sendWolPacket(mac1) },
-                    onLongClick = {
-                        editingMac = mac1
-                        currentMacType = 1
-                        showDialog = true
-                    },
-                    modifier = Modifier
-                        .size(buttonWidthDp, buttonHeightDp)
-                        .align(Alignment.TopStart),
-                    fontSize = fontSize.sp,
-                    fontFamily = fontFamily,
-                    buttonColor = buttonColor,
-                    textColor = textColor
-                )
+            ButtonGroup(
+                position = groupPosition,
+                buttonWidth = buttonWidthDp,
+                buttonHeight = buttonHeightDp,
+                spacing = spacingDp,
+                showTime = showTimePreference,
+                buttonTexts = listOf(
+                    if (showTimePreference) timeParts[0] else buttonText1,
+                    if (showTimePreference) timeParts[1] else buttonText2,
+                    if (showTimePreference) timeParts[2] else buttonText3
+                ),
+                fontSize = fontSize.sp,
+                fontFamily = fontFamily,
+                buttonColor = buttonColor,
+                textColor = textColor,
+                onButtonClick = { index ->
+                    when (index) {
+                        0 -> sendWolPacket(mac1)
+                        1 -> sendWolPacket(mac2)
+                        2 -> sendWolPacket(mac3)
+                    }
+                },
+                onButtonLongClick = { index ->
+                    editingMac = when (index) {
+                        0 -> mac1
+                        1 -> mac2
+                        else -> mac3
+                    }
+                    currentMacType = index + 1
+                    showDialog = true
+                }
+            )
+        }
+    }
+}
 
-                WolButton(
-                    text = if (showTimePreference) timeParts[1] else buttonText2,
-                    isTimeDisplay = showTimePreference,
-                    onClick = { sendWolPacket(mac2) },
-                    onLongClick = {
-                        editingMac = mac2
-                        currentMacType = 2
-                        showDialog = true
-                    },
-                    modifier = Modifier
-                        .size(buttonWidthDp, buttonHeightDp)
-                        .align(Alignment.CenterStart),
-                    fontSize = fontSize.sp,
-                    fontFamily = fontFamily,
-                    buttonColor = buttonColor,
-                    textColor = textColor
-                )
+@Composable
+fun MacAddressDialog(
+    initialMac: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit
+) {
+    var mac by remember { mutableStateOf(initialMac) }
 
-                WolButton(
-                    text = if (showTimePreference) timeParts[2] else buttonText3,
-                    isTimeDisplay = showTimePreference,
-                    onClick = { sendWolPacket(mac3) },
-                    onLongClick = {
-                        editingMac = mac3
-                        currentMacType = 3
-                        showDialog = true
-                    },
-                    modifier = Modifier
-                        .size(buttonWidthDp, buttonHeightDp)
-                        .align(Alignment.BottomStart),
-                    fontSize = fontSize.sp,
-                    fontFamily = fontFamily,
-                    buttonColor = buttonColor,
-                    textColor = textColor
-                )
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Edit MAC Address") },
+        text = {
+            TextField(
+                value = mac,
+                onValueChange = { mac = it },
+                label = { Text("New MAC Address") },
+                placeholder = { Text("Format: 01:23:45:67:89:AB") }
+            )
+        },
+        confirmButton = {
+            Button(onClick = { onConfirm(mac) }) {
+                Text("OK")
+            }
+        },
+        dismissButton = {
+            Button(onClick = onDismiss) {
+                Text("Cancel")
             }
         }
+    )
+}
+
+@Composable
+fun SettingsDrawerContent(
+    showTimePreference: Boolean,
+    onShowTimeChange: (Boolean) -> Unit,
+    buttonText1: String,
+    onButtonText1Change: (String) -> Unit,
+    buttonText2: String,
+    onButtonText2Change: (String) -> Unit,
+    buttonText3: String,
+    onButtonText3Change: (String) -> Unit,
+    buttonWidth: Float,
+    onButtonWidthChange: (Float) -> Unit,
+    buttonHeight: Float,
+    onButtonHeightChange: (Float) -> Unit,
+    fontSize: Float,
+    onFontSizeChange: (Float) -> Unit,
+    buttonColor: Color,
+    onButtonColorChange: (Color) -> Unit,
+    textColor: Color,
+    onTextColorChange: (Color) -> Unit,
+    broadcastIp: String,
+    onBroadcastIpChange: (String) -> Unit
+) {
+    Surface(
+        color = Color(0xFF1A1A1A),
+        modifier = Modifier.fillMaxSize()
+    ) {
+        Column(
+            modifier = Modifier
+                .padding(16.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.Top
+        ) {
+            Text("Settings", style = MaterialTheme.typography.headlineSmall, color = Color.White)
+
+            // Display Settings
+            Text("Display Settings",
+                style = MaterialTheme.typography.titleMedium,
+                color = Color.White,
+                modifier = Modifier.padding(vertical = 8.dp)
+            )
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
+                Text("Show time",
+                    color = Color.White,
+                    modifier = Modifier.weight(1f)
+                )
+                Switch(
+                    checked = showTimePreference,
+                    onCheckedChange = onShowTimeChange
+                )
+            }
+
+            if (!showTimePreference) {
+                OutlinedTextField(
+                    value = buttonText1,
+                    onValueChange = onButtonText1Change,
+                    label = { Text("Button 1 Text") },
+                    modifier = Modifier.padding(vertical = 4.dp)
+                )
+                OutlinedTextField(
+                    value = buttonText2,
+                    onValueChange = onButtonText2Change,
+                    label = { Text("Button 2 Text") },
+                    modifier = Modifier.padding(vertical = 4.dp)
+                )
+                OutlinedTextField(
+                    value = buttonText3,
+                    onValueChange = onButtonText3Change,
+                    label = { Text("Button 3 Text") },
+                    modifier = Modifier.padding(vertical = 4.dp)
+                )
+            }
+
+            HorizontalDivider(color = Color.LightGray, modifier = Modifier.padding(vertical = 8.dp))
+
+            // Size Settings
+            Text("Size Settings",
+                style = MaterialTheme.typography.titleMedium,
+                color = Color.White,
+                modifier = Modifier.padding(vertical = 8.dp)
+            )
+            SizeSlider(
+                label = "Button Width",
+                value = buttonWidth,
+                onValueChange = onButtonWidthChange,
+                range = 100f..300f
+            )
+            SizeSlider(
+                label = "Button Height",
+                value = buttonHeight,
+                onValueChange = onButtonHeightChange,
+                range = 100f..200f
+            )
+            SizeSlider(
+                label = "Font Size",
+                value = fontSize,
+                onValueChange = onFontSizeChange,
+                range = 100f..400f
+            )
+
+            HorizontalDivider(color = Color.LightGray, modifier = Modifier.padding(vertical = 8.dp))
+
+            // Color Settings
+            Text("Color Settings",
+                style = MaterialTheme.typography.titleMedium,
+                color = Color.White,
+                modifier = Modifier.padding(vertical = 8.dp)
+            )
+            ColorPicker(
+                title = "Button Color",
+                selectedColor = buttonColor,
+                onColorSelected = onButtonColorChange
+            )
+            ColorPicker(
+                title = "Text Color",
+                selectedColor = textColor,
+                onColorSelected = onTextColorChange
+            )
+
+            HorizontalDivider(color = Color.LightGray, modifier = Modifier.padding(vertical = 8.dp))
+
+            // Network Settings
+            Text("Network Settings",
+                style = MaterialTheme.typography.titleMedium,
+                color = Color.White,
+                modifier = Modifier.padding(vertical = 8.dp)
+            )
+            OutlinedTextField(
+                value = broadcastIp,
+                onValueChange = onBroadcastIpChange,
+                label = { Text("Broadcast IP Address") },
+                modifier = Modifier.padding(vertical = 4.dp)
+            )
+        }
+    }
+}
+
+@Composable
+fun ButtonGroup(
+    position: Offset,
+    buttonWidth: androidx.compose.ui.unit.Dp,
+    buttonHeight: androidx.compose.ui.unit.Dp,
+    spacing: androidx.compose.ui.unit.Dp,
+    showTime: Boolean,
+    buttonTexts: List<String>,
+    fontSize: TextUnit,
+    fontFamily: FontFamily,
+    buttonColor: Color,
+    textColor: Color,
+    onButtonClick: (Int) -> Unit,
+    onButtonLongClick: (Int) -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .offset { IntOffset(position.x.toInt(), position.y.toInt()) }
+            .size(buttonWidth, buttonHeight * 3 + spacing * 2)
+    ) {
+        // Top button
+        WolButton(
+            text = buttonTexts[0],
+            isTimeDisplay = showTime,
+            onClick = { onButtonClick(0) },
+            onLongClick = { onButtonLongClick(0) },
+            modifier = Modifier
+                .size(buttonWidth, buttonHeight)
+                .align(Alignment.TopStart),
+            fontSize = fontSize,
+            fontFamily = fontFamily,
+            buttonColor = buttonColor,
+            textColor = textColor
+        )
+
+        // Middle button
+        WolButton(
+            text = buttonTexts[1],
+            isTimeDisplay = showTime,
+            onClick = { onButtonClick(1) },
+            onLongClick = { onButtonLongClick(1) },
+            modifier = Modifier
+                .size(buttonWidth, buttonHeight)
+                .align(Alignment.CenterStart),
+            fontSize = fontSize,
+            fontFamily = fontFamily,
+            buttonColor = buttonColor,
+            textColor = textColor
+        )
+
+        // Bottom button
+        WolButton(
+            text = buttonTexts[2],
+            isTimeDisplay = showTime,
+            onClick = { onButtonClick(2) },
+            onLongClick = { onButtonLongClick(2) },
+            modifier = Modifier
+                .size(buttonWidth, buttonHeight)
+                .align(Alignment.BottomStart),
+            fontSize = fontSize,
+            fontFamily = fontFamily,
+            buttonColor = buttonColor,
+            textColor = textColor
+        )
     }
 }
 
@@ -569,102 +667,17 @@ fun ColorPicker(title: String, selectedColor: Color, onColorSelected: (Color) ->
                     modifier = Modifier
                         .size(40.dp)
                         .padding(2.dp)
-                        .combinedClickable(onClick = { onColorSelected(color) })
+                        .clickable { onColorSelected(color) }
                 ) {
                     Surface(
                         color = color,
                         shape = MaterialTheme.shapes.small,
                         modifier = Modifier.fillMaxSize(),
-                        border = if (color == selectedColor) androidx.compose.foundation.BorderStroke(2.dp, Color.White) else null
+                        border = if (color == selectedColor) BorderStroke(2.dp, Color.White) else null
                     ) {}
                 }
             }
         }
-    }
-}
-
-@Composable
-fun FontDropdown(
-    fonts: List<FontInfo>,
-    selectedFontRes: Int,
-    onFontSelected: (FontInfo) -> Unit
-) {
-    var expanded by remember { mutableStateOf(false) }
-
-    // Find the selected font info or default to the first font
-    val selectedFont by remember(selectedFontRes, fonts) {
-        mutableStateOf(
-            fonts.firstOrNull {
-                it.type == FontType.RESOURCE && it.resourceId == selectedFontRes
-            } ?: fonts.firstOrNull() ?: FontInfo("Default")
-        )
-    }
-
-    ExposedDropdownMenuBox(
-        expanded = expanded,
-        onExpandedChange = { expanded = !expanded }
-    ) {
-        TextField(
-            value = selectedFont.name,
-            onValueChange = {},
-            readOnly = true,
-            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-            modifier = Modifier.menuAnchor(),
-            textStyle = LocalTextStyle.current.copy(color = Color.White),
-            colors = ExposedDropdownMenuDefaults.textFieldColors(
-                focusedTextColor = Color.White,
-                unfocusedTextColor = Color.White,
-                focusedTrailingIconColor = Color.White,
-                unfocusedTrailingIconColor = Color.White,
-                focusedContainerColor = Color.Transparent,
-                unfocusedContainerColor = Color.Transparent,
-                focusedIndicatorColor = Color.Transparent,
-                unfocusedIndicatorColor = Color.Transparent
-            )
-        )
-
-        ExposedDropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false }
-        ) {
-            fonts.forEach { fontInfo ->
-                DropdownMenuItem(
-                    text = { Text(fontInfo.name, color = Color.White) },
-                    onClick = {
-                        onFontSelected(fontInfo)
-                        expanded = false
-                    }
-                )
-            }
-        }
-    }
-}
-
-fun getFontResources(context: Context): List<FontInfo> {
-    val fontList = mutableListOf<FontInfo>()
-
-    // Add custom fonts from res/font
-    fontList.add(FontInfo("LCD Dot (alt)", R.font.lcddot, FontType.RESOURCE))
-    fontList.add(FontInfo("Pixel Bus", R.font.pixelbus, FontType.RESOURCE))
-
-    // Add system fonts
-    fontList.add(FontInfo("Sans Serif", type = FontType.SYSTEM, systemFont = "sans-serif"))
-    fontList.add(FontInfo("Serif", type = FontType.SYSTEM, systemFont = "serif"))
-    fontList.add(FontInfo("Monospace", type = FontType.SYSTEM, systemFont = "monospace"))
-    fontList.add(FontInfo("Sans Serif Condensed", type = FontType.SYSTEM, systemFont = "sans-serif-condensed"))
-    fontList.add(FontInfo("Sans Serif Light", type = FontType.SYSTEM, systemFont = "sans-serif-light"))
-    fontList.add(FontInfo("Sans Serif Medium", type = FontType.SYSTEM, systemFont = "sans-serif-medium"))
-    fontList.add(FontInfo("Sans Serif Black", type = FontType.SYSTEM, systemFont = "sans-serif-black"))
-    fontList.add(FontInfo("Casual", type = FontType.SYSTEM, systemFont = "casual"))
-    fontList.add(FontInfo("Cursive", type = FontType.SYSTEM, systemFont = "cursive"))
-
-    return fontList
-}
-
-fun loadFontFamily(fontInfo: FontInfo): FontFamily {
-    return when (fontInfo.type) {
-        FontType.RESOURCE -> FontFamily(Font(fontInfo.resourceId, FontWeight.Normal))
-        FontType.SYSTEM -> FontFamily.Default
     }
 }
 
@@ -687,7 +700,6 @@ fun SizeSlider(
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class, ExperimentalAnimationApi::class)
 @Composable
 fun WolButton(
     text: String,
@@ -701,7 +713,13 @@ fun WolButton(
     textColor: Color
 ) {
     Surface(
-        modifier = modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick),
+        modifier = modifier
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onLongPress = { onLongClick() },
+                    onTap = { onClick() }
+                )
+            },
         color = buttonColor,
         shape = MaterialTheme.shapes.medium,
         shadowElevation = 2.dp
@@ -720,10 +738,13 @@ fun WolButton(
                             targetState = digit,
                             transitionSpec = {
                                 val slideDirection = if (targetState > initialState) -1 else 1
-                                slideInVertically { height -> slideDirection * height } + fadeIn() with
-                                        slideOutVertically { height -> -slideDirection * height } + fadeOut()
+                                slideInVertically { height -> slideDirection * height } +
+                                        fadeIn(animationSpec = tween(durationMillis = 150)) togetherWith
+                                        slideOutVertically { height -> -slideDirection * height } +
+                                        fadeOut(animationSpec = tween(durationMillis = 150))
                             },
-                            contentAlignment = Alignment.Center
+                            contentAlignment = Alignment.Center,
+                            label = "Digit Animation"
                         ) { targetChar ->
                             Text(
                                 text = targetChar.toString(),
@@ -762,19 +783,10 @@ fun isValidMac(mac: String): Boolean {
     return pattern.matches(mac)
 }
 
-fun getFontFamilyById(fontRes: Int, fonts: List<FontInfo>): FontFamily {
-    val fontInfo = fonts.firstOrNull { it.type == FontType.RESOURCE && it.resourceId == fontRes }
-    return if (fontInfo != null) {
-        loadFontFamily(fontInfo)
-    } else {
-        FontFamily(Font(fontRes, FontWeight.Normal))
-    }
-}
-
 @Preview(showBackground = true)
 @Composable
 fun PreviewWolControlScreen() {
     DashboardWOLTheme {
-        WolControlScreen()
+        WolControlScreen(Executors.newSingleThreadExecutor())
     }
 }
