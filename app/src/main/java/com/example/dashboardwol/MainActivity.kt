@@ -86,21 +86,30 @@ import kotlin.random.Random
 class MainActivity : ComponentActivity() {
     private val executor = Executors.newSingleThreadExecutor()
 
-    @SuppressLint("SourceLockedOrientationActivity")
+    @SuppressLint("SourceLockedOrientationActivity", "ObsoleteSdkInt")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         // Set portrait orientation
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
 
-        // Modern approach for full screen instead of deprecated FLAG_FULLSCREEN
-        WindowCompat.setDecorFitsSystemWindows(window, false)
+        // Handle fullscreen differently based on Android version
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            // Modern approach for Android 11+ (API 30+)
+            WindowCompat.setDecorFitsSystemWindows(window, false)
+        } else {
+            // Legacy approach for older Android versions
+            @Suppress("DEPRECATION")
+            window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+        }
 
         // Keep screen on
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
-        // Enable edge-to-edge display
-        enableEdgeToEdge()
+        // Enable edge-to-edge display (only beneficial on newer Android versions)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            enableEdgeToEdge()
+        }
 
         setContent {
             DashboardWOLTheme {
